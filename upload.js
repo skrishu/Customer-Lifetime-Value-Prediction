@@ -16,12 +16,16 @@ document.getElementById('uploadForm').addEventListener('submit', function (event
         method: 'POST',
         body: formData
     })
-    .then(response => response.text())
-    .then(data => alert('File uploaded successfully: ' + data))
+    .then(response => response.json()) // Expect JSON response
+    .then(data => {
+        if (data.error) {
+            alert('Missing files: ' + data.error); // Show missing columns in alert
+        } else {
+            alert('File uploaded successfully: ' + data.message); // Success message
+        }
+    })
     .catch(error => {
         console.error('Error uploading file:', error);
         alert('Error uploading file. Check console for details.');
     });
-    
 });
-

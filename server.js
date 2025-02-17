@@ -1,101 +1,113 @@
-require('dotenv').config(); // Load environment variables at the beginning
 const express = require('express');
-const cors = require('cors'); 
-const multer = require('multer');
 const mongoose = require('mongoose');
-const csv = require('csv-parser');
+const multer = require('multer');
 const fs = require('fs');
+const csv = require('csv-parser');
 const path = require('path');
-
-// Load required columns from schema.json
-const schemaPath = path.join(__dirname, 'schema.json');
-const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+const cors = require('cors');
+require('dotenv').config(); // Load environment variables
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-const MONGO_URI = process.env.MONGODB_URI; 
 
+// Enable CORS (if needed)
 app.use(cors());
-app.use(express.json());
 
-// Ensure the uploads directory exists
-const UPLOAD_DIR = path.join(__dirname, 'uploads');
-if (!fs.existsSync(UPLOAD_DIR)) {
-    fs.mkdirSync(UPLOAD_DIR);
-}
+// Set up MongoDB connection
+mongoose.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+  .then(() => console.log('Connected to MongoDB'))
+  .catch((error) => console.log('Error connecting to MongoDB:', error));
 
-// MongoDB connection
-mongoose.connect(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
-    .then(() => console.log('Connected to MongoDB'))
-    .catch(err => {
-        console.error('Failed to connect to MongoDB:', err);
-        process.exit(1); // Exit the application if MongoDB connection fails
-    });
-
-// Set up multer for file uploads
-const upload = multer({ dest: UPLOAD_DIR });
-
-// Define the MongoDB schema and model
-const DatasetSchema = new mongoose.Schema({
-    InvoiceNo: String,
-    StockCode: String,
-    Quantity: Number,
-    InvoiceDate: Date,
-    UnitPrice: Number,
-    CustomerID: String,
-    Country: String,
-    CustomerLifetimeValue: Number,
+// Define the schema for your data
+const customerSchema = new mongoose.Schema({
+  customer_id: String,
+  total_revenue: Number,
+  total_transactions: Number,
+  average_order_value: Number,
+  purchase_frequency: Number,
+  customer_first_purchase_date: Date,
+  days_since_last_purchase: Number,
+  retention_probability: Number,
 });
 
-const Dataset = mongoose.model('Dataset', DatasetSchema);
+const Customer = mongoose.model('Customer', customerSchema);
 
-// Serve static files from the 'public' directory
-app.use(express.static(path.join(__dirname, 'public')));
+// Set up multer for file uploads
+const storage = multer.memoryStorage(); // Store file in memory instead of a folder
+const upload = multer({ storage: storage });
 
-// Endpoint to handle file uploads
+// Endpoint for handling the CSV upload and MongoDB storage
 app.post('/upload', upload.single('dataset'), (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'No file uploaded.' });
     }
 
-    const filePath = path.join(UPLOAD_DIR, req.file.filename);
-    const results = [];
+    const fileBuffer = req.file.buffer; // Get the file from memory
+    const missingColumns = [];
+    const customerData = []; // Array to hold data for MongoDB insertion
 
-    // Process the uploaded CSV file
-    fs.createReadStream(filePath)
+    // Parse CSV file directly from buffer
+    const readableStream = require('stream').Readable.from(fileBuffer);
+    
+    readableStream
         .pipe(csv())
-        .on('data', (row) => {
-            // Validate data using required columns from schema.json
-            const isValid = schema.required_columns.every(col => row[col] !== undefined && row[col] !== null);
-            if (isValid) {
-                results.push(new Dataset({
-                    InvoiceNo: row.InvoiceNo,
-                    StockCode: row.StockCode,
-                    Quantity: parseInt(row.Quantity, 10),
-                    InvoiceDate: new Date(row.InvoiceDate),
-                    UnitPrice: parseFloat(row.UnitPrice),
-                    CustomerID: row.CustomerID,
-                    Country: row.Country,
-                    CustomerLifetimeValue: parseFloat(row["Customer Lifetime Value"]),
-                }));
+        .on('headers', (headers) => {
+            console.log('CSV Headers:', headers);
+            // Check if required columns are present
+            const requiredColumnsMapping = {
+                "CustomerID": ["Customer_Id","customer_id", "customer", "cust_id", "custid", "client_id", "user_id"],
+        "Total Revenue": ["Total_Revenue","total_revenue", "revenue", "sales", "gross_revenue", "lifetime_value"],
+        "Total Transactions": ["Total_Transactions","total_transactions", "num_transactions", "transaction_count", "orders", "purchases"],
+        "Average Order Value (AOV)": ["Average_Order_Value","average_order_value", "aov", "mean_order_value", "order_avg"],
+        "Purchase Frequency": ["Purchase_Frequency","purchase_frequency", "order_frequency", "buying_frequency", "repeat_rate"],
+        "Customer First Purchase Date": ["Customer_First_Purchase_Date","customer_first_purchase_date", "first_order_date", "signup_date", "initial_purchase"],
+        "Days Since Last Purchase": ["Days Since Last Purchase","days_since_last_purchase", "last_purchase_days", "recency", "time_since_last_order"],
+        "Retention Probability": ["Retention_Probibility","retention_probability", "prob_alive", "customer_retention", "repeat_probability"]
+  
+            };
+
+            for (const [key, columnNames] of Object.entries(requiredColumnsMapping)) {
+                const columnFound = columnNames.some(col => headers.includes(col));
+                if (!columnFound) {
+                    missingColumns.push(key);
+                }
             }
         })
+        .on('data', (row) => {
+            // Transform each row into a MongoDB document
+            customerData.push({
+                customer_id: row["customer_id"] || row["customer"],
+                total_revenue: parseFloat(row["total_revenue"] || row["revenue"] || 0),
+                total_transactions: parseInt(row["total_transactions"] || row["orders"] || 0),
+                average_order_value: parseFloat(row["average_order_value"] || row["aov"] || 0),
+                purchase_frequency: parseFloat(row["purchase_frequency"] || row["order_frequency"] || 0),
+                customer_first_purchase_date: row["customer_first_purchase_date"] || row["signup_date"] || null,
+                days_since_last_purchase: parseInt(row["days_since_last_purchase"] || 0),
+                retention_probability: parseFloat(row["retention_probability"] || row["prob_alive"] || 0)
+            });
+        })
         .on('end', async () => {
+            if (missingColumns.length > 0) {
+                console.log('Missing columns:', missingColumns);
+                return res.json({ error: `Missing required columns: ${missingColumns.join(', ')}` });
+            }
+
             try {
-                await Dataset.insertMany(results);
-                res.json({ message: 'File uploaded and data saved to MongoDB successfully!' });
+                // Insert the parsed data into MongoDB
+                const result = await Customer.insertMany(customerData);
+                console.log('Data inserted into MongoDB:', result);
+                res.json({ message: 'File uploaded and data inserted successfully' });
             } catch (err) {
-                console.error('Error saving to MongoDB:', err);
-                res.status(500).json({ error: 'Error saving data to MongoDB' });
+                console.error('Error inserting data into MongoDB:', err);
+                res.status(500).json({ error: 'Error inserting data into MongoDB.' });
             }
         })
         .on('error', (err) => {
-            console.error('Error processing file:', err);
-            res.status(500).json({ error: 'Error processing file' });
+            console.error('Error reading CSV:', err);
+            res.status(500).json({ error: 'Error reading CSV file.' });
         });
 });
 
 // Start the server
-app.listen(PORT, () => {
-    console.log(`Server is running on http://localhost:${PORT}`);
+app.listen(3000, () => {
+    console.log('Server is running on http://localhost:3000');
 });
