@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Customer Lifetime Value (CLV) - Home</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header>
+    <h1>Customer Lifetime Value (CLV)</h1>
+</header>
+
+<nav>
+    <a href="javascript:void(0)" onclick="showSection('home')">Home</a>
+    <a href="javascript:void(0)" onclick="showSection('about')">About Us</a>
+    <a href="javascript:void(0)" onclick="showSection('contact')">Contact</a>
+</nav>
+
+<div class="content">
+    <section id="home" class="section active">
+        <h2>Welcome to CLV Insights</h2>
+        <p>Learn how understanding Customer Lifetime Value can drive business success and improve marketing strategies.</p>
+
+        <h2>What is CLV?</h2>
+        <p>Customer lifetime value (CLV) is one of the key stats to track as part of a customer experience program. Customer lifetime value is a measurement of how valuable a customer is to your company, not just on a purchase-by-purchase basis but across entire customer relationships.</p>
+    
+        <h2>Why is CLV Important?</h2>
+        <p>CLV is crucial for businesses because it enables them to:</p>
+        <ul>
+            <li>Understand the long-term value of each customer</li>
+            <li>Allocate marketing resources more effectively</li>
+            <li>Improve customer retention strategies</li>
+            <li>Make data-driven decisions for pricing and customer segmentation</li>
+            <li>Enhance overall profitability by focusing on high-value customers</li>
+        </ul>
+
+        <div class="upload-section">
+            <h3>Upload Your Dataset (CSV, Excel, or JSON)</h3>
+            <form id="uploadForm">
+                <label for="fileUpload" class="upload-label">Choose a file:</label>
+                <input type="file" id="fileUpload" name="dataset" class="file-input" required>
+                <span class="upload-symbol">📤</span>
+                <button type="submit" id="uploadButton">Upload</button>
+            </form>
+        </div>
+        
+        
+    </section>
+
+    <section id="about" class="section">
+        <h2>About Us</h2>
+        <p>We are third year Computer Science and Engineering (Data Science) students.
+            We are determined towards building a website that will help business owners
+            to know and understand which customers to retain.
+            Stay tuned for what comes next!
+        </p>
+    </section>
+
+    <section id="contact" class="section">
+        <h2>Contact Us</h2>
+        <p>If you have any questions or want to learn more about how CLV can benefit your business, reach out to us!</p>
+    </section>
+</div>
+
+<footer>
+    <p>&copy; 2025 Customer Lifetime Value Insights. All rights reserved.</p>
+</footer>
+
+<script src="script.js"></script>
+<script src="upload.js"></script>
+
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+    "required_columns_mapping": {
+        "CustomerID": ["customer_id", "customer", "cust_id", "custid", "client_id", "user_id"],
+        "Total Revenue": ["total_revenue", "revenue", "sales", "gross_revenue", "lifetime_value"],
+        "Total Transactions": ["total_transactions", "num_transactions", "transaction_count", "orders", "purchases"],
+        "Average Order Value (AOV)": ["average_order_value", "aov", "mean_order_value", "order_avg"],
+        "Purchase Frequency": ["purchase_frequency", "order_frequency", "buying_frequency", "repeat_rate"],
+        "Customer First Purchase Date": ["customer_first_purchase_date", "first_order_date", "signup_date", "initial_purchase"],
+        "Days Since Last Purchase": ["days_since_last_purchase", "last_purchase_days", "recency", "time_since_last_order"],
+        "Retention Probability": ["retention_probability", "prob_alive", "customer_retention", "repeat_probability"]
+    }
+}
