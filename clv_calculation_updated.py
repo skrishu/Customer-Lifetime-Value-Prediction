@@ -4,6 +4,8 @@ import json
 import difflib
 from pymongo import MongoClient
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.ensemble import RandomForestRegressor
+import joblib
 
 # Load Schema JSON
 schema_path = r'C:\Krisha\IPD\CLV Model Building\schema.json'
@@ -12,9 +14,24 @@ with open(schema_path, 'r') as f:
 
 required_columns = schema.get("required_columns", [])
 
-# Load Dataset
-file_path = r"C:\Krisha\IPD\AutoInsurance.csv"
-data = pd.read_csv(file_path, encoding='ISO-8859-1', low_memory=False)
+# Connect to MongoDB and Fetch Data
+try:
+    client = MongoClient('mongodb://localhost:27017/')
+    db = client['clv_database1']
+    collection = db['customer_clv7']  # Update with the correct collection name
+    
+    # Fetch data from MongoDB
+    data = pd.DataFrame(list(collection.find()))
+    
+    # Drop MongoDB's default '_id' column if present
+    if '_id' in data.columns:
+        data.drop(columns=['_id'], inplace=True)
+    print("✅ Data fetched from MongoDB")
+except Exception as e:
+    print(f"❌ MongoDB Fetch Error: {e}")
+    exit()
+
+# Standardize Column Names
 data.columns = data.columns.str.strip()
 
 # Function to map required schema columns dynamically
@@ -37,72 +54,86 @@ if customer_id_col:
 # Debugging Step: Print Available Columns
 print("✅ Available Columns:", data.columns)
 
-# Ensure required columns exist
-missing_cols = [col for col in required_columns if col not in data.columns]
-if missing_cols:
-    raise ValueError(f"❌ Missing Columns: {missing_cols}")
+# Check if necessary columns are available and compute them if not
+if 'Repeat Count' not in data.columns:
+    data['Repeat Count'] = data['CustomerID'].map(data['CustomerID'].value_counts())
+    print("✅ 'Repeat Count' column created.")
 
-# Convert date columns safely
-date_cols = ['Customer First Purchase Date']
-for col in date_cols:
-    if col in data.columns:
-        data[col] = pd.to_datetime(data[col], errors='coerce')
+if 'Days Since Last Purchase' not in data.columns:
+    data['Days Since Last Purchase'] = 1  # Default if not available
+    print("✅ 'Days Since Last Purchase' column created.")
 
-# Compute CLV Metrics
-if 'frequency' in data.columns:
-    data['Total Transactions'] = data['frequency'] * 0.25
-else:
-    if 'Repeat Count' not in data.columns:
-        data['Repeat Count'] = data['CustomerID'].map(data['CustomerID'].value_counts())
-    data['Total Transactions'] = data['Repeat Count'] * 0.25
-
-# Ensure 'Total Revenue' exists
 if 'Total Revenue' not in data.columns:
-    data['Total Revenue'] = 0  # Default to 0 if missing
+    data['Total Revenue'] = data['Revenue']  # Assuming 'Revenue' is available
+    print("✅ 'Total Revenue' column created.")
 
-# Handle missing 'Days Since Last Purchase'
-if 'Days Since Last Purchase' in data.columns:
-    data['Days Since Last Purchase'] = data['Days Since Last Purchase'].fillna(1)
-else:
-    data['Days Since Last Purchase'] = 1  # Default value
+if 'Total Transactions' not in data.columns:
+    # Use 'Repeat Count' to estimate the total transactions if missing
+    data['Total Transactions'] = data['Repeat Count']
+    print("✅ 'Total Transactions' column created.")
 
-# Avoid division by zero
-data['Average Order Value (AOV)'] = data['Total Revenue'] / data['Total Transactions'].replace(0, np.nan)
-data['Purchase Frequency'] = data['Total Transactions'] / data['Days Since Last Purchase'].replace(0, np.nan)
-data['Retention Probability'] = 0.75  # Default value
+# Now aggregate data by CustomerID
+data_aggregated = data.groupby('CustomerID', as_index=False).agg({
+    'Total Revenue': 'sum',
+    'Days Since Last Purchase': 'min',
+    'Repeat Count': 'sum',
+    'Total Transactions': 'sum'
+})
 
-# Compute CLV Formula
+# Print the result to verify the aggregation
+print("✅ Aggregated Data:")
+print(data_aggregated.head())
+
+# Ensure 'Total Revenue' and 'Days Since Last Purchase' are filled
+data_aggregated['Total Revenue'] = data_aggregated['Total Revenue'].fillna(0)
+data_aggregated['Days Since Last Purchase'] = data_aggregated['Days Since Last Purchase'].fillna(0)
+
+# Compute other necessary columns
+data_aggregated['Retention Probability'] = 0.75  # Default value
+
+# Calculate CLV (Customer Lifetime Value)
 discount_rate = 0.05
-data["CLV_k(x)"] = np.where(
+data_aggregated["CLV_k(x)"] = np.where(
     (1 - discount_rate) == 0, 
-    data["Total Revenue"] * data["Retention Probability"],  
-    data["Total Revenue"] * data["Retention Probability"] / (1 - discount_rate)
+    data_aggregated["Total Revenue"] * data_aggregated["Retention Probability"],  
+    data_aggregated["Total Revenue"] * data_aggregated["Retention Probability"] / discount_rate
 )
 
 # Scale Features using MinMaxScaler
 scaler = MinMaxScaler()
-data['Purchase Frequency Scaled'] = scaler.fit_transform(data[['Purchase Frequency']].fillna(0))
-data['Recency Scaled'] = scaler.fit_transform(data[['Days Since Last Purchase']].fillna(0))
+data_aggregated['Purchase Frequency Scaled'] = scaler.fit_transform(data_aggregated[['Total Transactions']].fillna(0))
+data_aggregated['Recency Scaled'] = scaler.fit_transform(data_aggregated[['Days Since Last Purchase']].fillna(0))
 
-# Compute Final CLV
-data['Customer Lifetime Value'] = (
-    data['Purchase Frequency Scaled'] * data['CLV_k(x)'] + data['Total Transactions']
+# Load the pre-trained Random Forest model
+model_path = r'C:\Krisha\IPD\CLV Model Building\stacked_regressor_model.pkl'  # Update the path as needed
+model = joblib.load(model_path)
+
+# Select the relevant features for prediction (adjust as needed based on your training)
+model_features = data_aggregated[['Purchase Frequency Scaled', 'Recency Scaled']]  # Assuming these were the features used during training
+
+# Predict retention probability using the trained model
+predicted_retention_prob = model.predict(model_features)
+
+# Add predicted retention probability to the aggregated data
+data_aggregated['Predicted Retention Probability'] = predicted_retention_prob
+
+# Compute Final CLV using the model-predicted retention probability
+data_aggregated['Customer Lifetime Value'] = (
+    data_aggregated['Purchase Frequency Scaled'] * data_aggregated['CLV_k(x)'] + data_aggregated['Total Transactions'] * data_aggregated['Predicted Retention Probability']
 )
 
 # Ensure CLV is float before storing in MongoDB
-data["Customer Lifetime Value"] = data["Customer Lifetime Value"].astype(float)
+data_aggregated["Customer Lifetime Value"] = data_aggregated["Customer Lifetime Value"].astype(float)
 
 # Debugging prints to check computed values
 print("📊 CLV Calculation Summary:")
-print(data[['CustomerID', 'Total Revenue', 'Retention Probability', 'CLV_k(x)', 
-           'Purchase Frequency Scaled', 'Total Transactions', 'Customer Lifetime Value']].head())
+print(data_aggregated[['CustomerID', 'Total Revenue', 'Retention Probability', 'CLV_k(x)', 
+                       'Purchase Frequency Scaled', 'Total Transactions', 'Predicted Retention Probability', 'Customer Lifetime Value']].head())
 
 # Store in MongoDB
 try:
-    client = MongoClient('mongodb://localhost:27017/')
-    db = client['clv_database1']
-    collection = db['customer_clv12']
-    collection.insert_many(data.to_dict('records'))
+    collection_output = db['customer_clv14']
+    collection_output.insert_many(data_aggregated.to_dict('records'))
     print("✅ Data insertion into MongoDB complete! 🎉")
 except Exception as e:
     print(f"❌ MongoDB Insertion Error: {e}")
